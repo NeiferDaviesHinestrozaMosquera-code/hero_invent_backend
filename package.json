@@ -1,0 +1,20 @@
+{
+  "name": "hero_invent_backend",
+  "version": "1.0.0",
+  "description": "API para sistema de inventario HeroInvent",
+  "main": "app_hero.js",
+  "scripts": {
+    "start": "node app_hero.js",
+    "dev": "nodemon app_hero.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "mysql2": "^3.14.1",
+    "sequelize": "^6.32.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
