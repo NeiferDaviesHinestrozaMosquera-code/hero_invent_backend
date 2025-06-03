@@ -1,31 +1,46 @@
-const { DataTypes } = require('sequelize');
-const sequelize = require('../config/db');
-const Product = require('./Product');
+const db = require('../config/db');
 
-const Category = sequelize.define('Category', {
-  id: {
-    type: DataTypes.STRING(36),
-    primaryKey: true
-  },
-  name: {
-    type: DataTypes.STRING(255),
-    allowNull: false,
-    unique: true
-  },
-  description: {
-    type: DataTypes.TEXT
+class Category {
+  static async getAll() {
+    const [rows] = await db.query('SELECT * FROM categories');
+    return rows;
   }
-}, {
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
-  tableName: 'categories'
-});
 
-// Relación con Productos (una categoría tiene muchos productos)
-Category.hasMany(Product, {
-  foreignKey: 'category_id',
-  as: 'products'
-});
+  static async getById(id) {
+    const [rows] = await db.query('SELECT * FROM categories WHERE id = ?', [id]);
+    return rows[0];
+  }
+
+  static async create(category) {
+    const { id, name, description } = category;
+    const [result] = await db.query(
+      'INSERT INTO categories (id, name, description) VALUES (?, ?, ?)',
+      [id, name, description]
+    );
+    return result;
+  }
+
+  static async update(id, category) {
+    const { name, description } = category;
+    const [result] = await db.query(
+      'UPDATE categories SET name = ?, description = ? WHERE id = ?',
+      [name, description, id]
+    );
+    return result;
+  }
+
+  static async delete(id) {
+    const [result] = await db.query('DELETE FROM categories WHERE id = ?', [id]);
+    return result;
+  }
+
+  static async getProductsByCategory(id) {
+    const [rows] = await db.query(
+      'SELECT * FROM products WHERE category_id = ?',
+      [id]
+    );
+    return rows;
+  }
+}
 
 module.exports = Category;

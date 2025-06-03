@@ -1,205 +1,149 @@
-const { DataTypes } = require('sequelize');
-const sequelize = require('../config/db');
-const Category = require('./Category');
-const Supplier = require('./Supplier');
+const db = require('../config/db');
 
-const Product = sequelize.define('Product', {
-  id: {
-    type: DataTypes.STRING(36),
-    primaryKey: true,
-    defaultValue: require('crypto').randomUUID()
-  },
-  name: {
-    type: DataTypes.STRING(255),
-    allowNull: false,
-    validate: {
-      notEmpty: {
-        msg: 'El nombre del producto es requerido'
-      },
-      len: {
-        args: [2, 255],
-        msg: 'El nombre debe tener entre 2 y 255 caracteres'
-      }
-    }
-  },
-  description: {
-    type: DataTypes.TEXT,
-    validate: {
-      len: {
-        args: [0, 2000],
-        msg: 'La descripción no puede exceder los 2000 caracteres'
-      }
-    }
-  },
-  price: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    validate: {
-      isDecimal: {
-        msg: 'El precio debe ser un número decimal'
-      },
-      min: {
-        args: [0],
-        msg: 'El precio no puede ser negativo'
-      }
-    }
-  },
-  cost: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    validate: {
-      isDecimal: {
-        msg: 'El costo debe ser un número decimal'
-      },
-      min: {
-        args: [0],
-        msg: 'El costo no puede ser negativo'
-      }
-    }
-  },
-  stock: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0,
-    validate: {
-      isInt: {
-        msg: 'El stock debe ser un número entero'
-      },
-      min: {
-        args: [0],
-        msg: 'El stock no puede ser negativo'
-      }
-    }
-  },
-  min_stock: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0,
-    validate: {
-      isInt: {
-        msg: 'El stock mínimo debe ser un número entero'
-      },
-      min: {
-        args: [0],
-        msg: 'El stock mínimo no puede ser negativo'
-      }
-    }
-  },
-  sku: {
-    type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: {
-      msg: 'Este SKU ya está en uso'
-    },
-    validate: {
-      notEmpty: {
-        msg: 'El SKU es requerido'
-      }
-    }
-  },
-  barcode: {
-    type: DataTypes.STRING(100),
-    unique: {
-      msg: 'Este código de barras ya está en uso'
-    }
-  },
-  is_active: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
-  },
-  image: {
-    type: DataTypes.STRING(500),
-    validate: {
-      isUrl: {
-        msg: 'La imagen debe ser una URL válida'
-      }
-    }
-  },
-  category_id: {
-    type: DataTypes.STRING(36),
-    references: {
-      model: Category,
-      key: 'id'
-    }
-  },
-  supplier_id: {
-    type: DataTypes.STRING(36),
-    references: {
-      model: Supplier,
-      key: 'id'
-    }
+class Product {
+  // Obtener todos los productos
+  static async getAll() {
+    const query = `
+      SELECT p.*, 
+             c.name AS category_name,
+             s.name AS supplier_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      ORDER BY p.name
+    `;
+    const [rows] = await db.execute(query);
+    return rows;
   }
-}, {
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
-  tableName: 'products',
-  indexes: [
-    {
-      unique: true,
-      fields: ['sku']
-    },
-    {
-      unique: true,
-      fields: ['barcode']
-    },
-    {
-      fields: ['name']
-    },
-    {
-      fields: ['category_id']
-    },
-    {
-      fields: ['supplier_id']
-    }
-  ]
-});
 
-// Relación con Categoría
-Product.belongsTo(Category, { 
-  foreignKey: 'category_id',
-  as: 'category',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE'
-});
-
-// Relación con Proveedor
-Product.belongsTo(Supplier, { 
-  foreignKey: 'supplier_id',
-  as: 'supplier',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE'
-});
-
-// Métodos personalizados del modelo
-Product.prototype.isBelowMinStock = function() {
-  return this.stock < this.min_stock;
-};
-
-Product.prototype.getProfit = function() {
-  return this.price - this.cost;
-};
-
-Product.prototype.getProfitPercentage = function() {
-  return ((this.getProfit() / this.cost) * 100).toFixed(2);
-};
-
-// Hooks (ganchos) del modelo
-Product.beforeValidate((product, options) => {
-  if (product.name) {
-    product.name = product.name.trim();
+  // Obtener producto por ID
+  static async getById(id) {
+    const query = `
+      SELECT p.*, 
+             c.name AS category_name,
+             s.name AS supplier_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.id = ?
+    `;
+    const [rows] = await db.execute(query, [id]);
+    return rows[0];
   }
-  
-  if (product.sku) {
-    product.sku = product.sku.toUpperCase().trim();
-  }
-});
 
-Product.beforeCreate(async (product, options) => {
-  if (!product.sku) {
-    // Generar SKU automático si no se proporciona
-    const prefix = product.name.substring(0, 3).toUpperCase();
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    product.sku = `${prefix}-${randomNum}`;
+  // Crear nuevo producto
+  static async create(productData) {
+    const query = `
+      INSERT INTO products (
+        id, name, description, price, cost, stock, min_stock, 
+        category_id, supplier_id, sku, barcode, is_active, image
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const [result] = await db.execute(query, [
+      productData.id,
+      productData.name,
+      productData.description,
+      productData.price,
+      productData.cost,
+      productData.stock,
+      productData.min_stock,
+      productData.category_id,
+      productData.supplier_id,
+      productData.sku,
+      productData.barcode,
+      productData.is_active,
+      productData.image
+    ]);
+    return result;
   }
-});
+
+  // Actualizar producto
+  static async update(id, productData) {
+    const query = `
+      UPDATE products SET
+        name = ?,
+        description = ?,
+        price = ?,
+        cost = ?,
+        stock = ?,
+        min_stock = ?,
+        category_id = ?,
+        supplier_id = ?,
+        sku = ?,
+        barcode = ?,
+        is_active = ?,
+        image = ?
+      WHERE id = ?
+    `;
+    const [result] = await db.execute(query, [
+      productData.name,
+      productData.description,
+      productData.price,
+      productData.cost,
+      productData.stock,
+      productData.min_stock,
+      productData.category_id,
+      productData.supplier_id,
+      productData.sku,
+      productData.barcode,
+      productData.is_active,
+      productData.image,
+      id
+    ]);
+    return result;
+  }
+
+  // Eliminar producto
+  static async delete(id) {
+    const query = `DELETE FROM products WHERE id = ?`;
+    const [result] = await db.execute(query, [id]);
+    return result;
+  }
+
+  // Obtener productos por categoría
+  static async getByCategory(categoryId) {
+    const query = `
+      SELECT p.*, 
+             c.name AS category_name,
+             s.name AS supplier_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.category_id = ?
+    `;
+    const [rows] = await db.execute(query, [categoryId]);
+    return rows;
+  }
+
+  // Obtener productos por proveedor
+  static async getBySupplier(supplier_id) {
+    const query = `
+      SELECT p.*, 
+             c.name AS category_name,
+             s.name AS supplier_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.supplier_id = ?
+    `;
+    const [rows] = await db.execute(query, [supplier_id]);
+    return rows;
+  }
+
+  // Buscar productos por nombre o SKU
+  static async search(query) {
+    const searchQuery = `
+      SELECT p.*, 
+             c.name AS category_name,
+             s.name AS supplier_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.name LIKE ? OR p.sku LIKE ?
+    `;
+    const [rows] = await db.execute(searchQuery, [`%${query}%`, `%${query}%`]);
+    return rows;
+  }
+}
 
 module.exports = Product;

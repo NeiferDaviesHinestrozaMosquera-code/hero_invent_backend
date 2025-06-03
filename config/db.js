@@ -1,35 +1,25 @@
-const { Sequelize } = require('sequelize');
+const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'hero_invent_backend',
-  process.env.DB_USER || 'root',
-  process.env.DB_PASSWORD || '',
-  {
+const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
-    dialect: 'mysql',
-    port: process.env.DB_PORT || 3306,
-    dialectModule: require('mysql2'),
-    logging: false,
-    pool: {
-      max: 5,
-      min: 0,
-      acquire: 30000,
-      idle: 10000
-    }
-  }
-);
+    user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD,
+   database: process.env.DB_NAME || 'hero_invent_backend',
+   port: process.env.DB_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
 // Probar la conexión
-const testConnection = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log('Conectado a la base de datos MySQL');
-  } catch (error) {
-    console.error('Error al conectar a MySQL:', error);
+pool.getConnection((err, connection) => {
+  if (err) {
+    console.error('Error al conectar a MySQL:', err);
+    return;
   }
-};
+  console.log('Conectado a la base de datos MySQL');
+  connection.release();
+});
 
-testConnection();
-
-module.exports = sequelize;
+module.exports = pool;
