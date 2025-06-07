@@ -1,20 +1,8 @@
-const { v4: uuidv4 } = require('uuid');
-const db = require('../config/db');
 const Product = require('../models/Product');
-
 
 exports.getAllProducts = async (req, res) => {
   try {
     const products = await Product.getAll();
-    res.json(products);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-exports.getProductsByCategory = async (req, res) => {
-  try {
-    const products = await Product.getByCategory(req.params.categoryId);
     res.json(products);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -34,19 +22,45 @@ exports.getProductById = async (req, res) => {
   }
 };
 
+exports.getProductsByCategory = async (req, res) => {
+  try {
+    const { category_id } = req.params;
+    const products = await Product.getByCategory(category_id);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getProductsBySupplier = async (req, res) => {
+  try {
+    const { supplier_id } = req.params;
+    const products = await Product.getBySupplier(supplier_id);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.searchProducts = async (req, res) => {
   try {
-    const { query } = req.query;
-    if (!query) {
-      return res.status(400).json({ error: 'Search query is required' });
+    const { q: searchTerm } = req.query;
+    
+    if (!searchTerm) {
+      return res.status(400).json({ error: 'Search term is required' });
     }
     
-    const [products] = await db.query(
-      `SELECT * FROM products 
-       WHERE name LIKE ? OR description LIKE ? OR sku LIKE ? OR barcode LIKE ?`,
-      [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`]
-    );
-    
+    const products = await Product.search(searchTerm);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getLowStockProducts = async (req, res) => {
+  try {
+    const threshold = parseInt(req.query.threshold) || 10;
+    const products = await Product.getLowStock(threshold);
     res.json(products);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -55,44 +69,78 @@ exports.searchProducts = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    // Validación básica de campos requeridos
-    if (!req.body.name || !req.body.price || !req.body.cost) {
-      return res.status(400).json({ error: 'Name, price and cost are required fields' });
+    // Validación básica
+    if (!req.body.name || !req.body.price) {
+      return res.status(400).json({ 
+        error: 'Name and price are required',
+        details: 'Provide at least product name and price'
+      });
     }
-    
-    // Generar ID único si no se proporciona
-    const id = req.body.id || uuidv4();
-    
+
+    // Validar que el precio sea válido
+    const price = parseFloat(req.body.price);
+    if (isNaN(price) || price < 0) {
+      return res.status(400).json({ 
+        error: 'Invalid price',
+        details: 'Price must be a valid number >= 0'
+      });
+    }
+
+    // Validar costo si se proporciona
+    let cost = null;
+    if (req.body.cost !== undefined && req.body.cost !== null) {
+      cost = parseFloat(req.body.cost);
+      if (isNaN(cost) || cost < 0) {
+        return res.status(400).json({ 
+          error: 'Invalid cost',
+          details: 'Cost must be a valid number >= 0'
+        });
+      }
+    }
+
+    // Validar cantidad si se proporciona
+    let quantity = 0;
+    if (req.body.quantity !== undefined && req.body.quantity !== null) {
+      quantity = parseInt(req.body.quantity);
+      if (isNaN(quantity) || quantity < 0) {
+        return res.status(400).json({ 
+          error: 'Invalid quantity',
+          details: 'Quantity must be a valid integer >= 0'
+        });
+      }
+    }
+
+    // Verificar si el SKU ya existe (si se proporciona)
+    if (req.body.sku) {
+      const skuExists = await Product.skuExists(req.body.sku);
+      if (skuExists) {
+        return res.status(400).json({ 
+          error: 'SKU already exists',
+          details: 'Please use a different SKU'
+        });
+      }
+    }
+
     const newProduct = {
-      id,
       name: req.body.name,
+      sku: req.body.sku || null,
       description: req.body.description || null,
-      price: req.body.price,
-      cost: req.body.cost,
-      stock: req.body.stock || 0,
-      min_stock: req.body.min_stock || 0,
+      price: price,
+      cost: cost,
+      quantity: quantity,
       category_id: req.body.category_id || null,
       supplier_id: req.body.supplier_id || null,
-      sku: req.body.sku || '',
-      barcode: req.body.barcode || null,
-      is_active: req.body.is_active !== undefined ? req.body.is_active : true,
-      image: req.body.image || null
+      status: req.body.status || 'active'
     };
 
     const result = await Product.create(newProduct);
+    
     res.status(201).json({
-      id,
+      id: result.insertId,
       message: 'Product created successfully',
-      product: newProduct
+      product: { id: result.insertId, ...newProduct }
     });
   } catch (error) {
-    // Manejo específico de errores de duplicación
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ 
-        error: 'Duplicate entry',
-        field: error.message.includes('sku') ? 'SKU' : 'barcode'
-      });
-    }
     res.status(500).json({ error: error.message });
   }
 };
@@ -100,39 +148,69 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // Verificar si el producto existe
     const existingProduct = await Product.getById(id);
+    
     if (!existingProduct) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // Construir objeto actualizado
+    // Validar precio si se proporciona
+    let price = existingProduct.price;
+    if (req.body.price !== undefined) {
+      price = parseFloat(req.body.price);
+      if (isNaN(price) || price < 0) {
+        return res.status(400).json({ 
+          error: 'Invalid price',
+          details: 'Price must be a valid number >= 0'
+        });
+      }
+    }
+
+    // Validar costo si se proporciona
+    let cost = existingProduct.cost;
+    if (req.body.cost !== undefined) {
+      cost = req.body.cost === null ? null : parseFloat(req.body.cost);
+      if (cost !== null && (isNaN(cost) || cost < 0)) {
+        return res.status(400).json({ 
+          error: 'Invalid cost',
+          details: 'Cost must be a valid number >= 0'
+        });
+      }
+    }
+
+    // Validar cantidad si se proporciona
+    let quantity = existingProduct.quantity;
+    if (req.body.quantity !== undefined) {
+      quantity = parseInt(req.body.quantity);
+      if (isNaN(quantity) || quantity < 0) {
+        return res.status(400).json({ 
+          error: 'Invalid quantity',
+          details: 'Quantity must be a valid integer >= 0'
+        });
+      }
+    }
+
+    // Verificar si el SKU ya existe (si se cambia)
+    if (req.body.sku && req.body.sku !== existingProduct.sku) {
+      const skuExists = await Product.skuExists(req.body.sku, id);
+      if (skuExists) {
+        return res.status(400).json({ 
+          error: 'SKU already exists',
+          details: 'Please use a different SKU'
+        });
+      }
+    }
+
     const updatedProduct = {
       name: req.body.name || existingProduct.name,
-      description: req.body.description !== undefined 
-        ? req.body.description 
-        : existingProduct.description,
-      price: req.body.price || existingProduct.price,
-      cost: req.body.cost || existingProduct.cost,
-      stock: req.body.stock !== undefined 
-        ? req.body.stock 
-        : existingProduct.stock,
-      min_stock: req.body.min_stock !== undefined 
-        ? req.body.min_stock 
-        : existingProduct.min_stock,
-      category_id: req.body.category_id || existingProduct.category_id,
-      supplier_id: req.body.supplier_id || existingProduct.supplier_id,
-      sku: req.body.sku || existingProduct.sku,
-      barcode: req.body.barcode !== undefined 
-        ? req.body.barcode 
-        : existingProduct.barcode,
-      is_active: req.body.is_active !== undefined 
-        ? req.body.is_active 
-        : existingProduct.is_active,
-      image: req.body.image !== undefined 
-        ? req.body.image 
-        : existingProduct.image
+      sku: req.body.sku !== undefined ? req.body.sku : existingProduct.sku,
+      description: req.body.description !== undefined ? req.body.description : existingProduct.description,
+      price: price,
+      cost: cost,
+      quantity: quantity,
+      category_id: req.body.category_id !== undefined ? req.body.category_id : existingProduct.category_id,
+      supplier_id: req.body.supplier_id !== undefined ? req.body.supplier_id : existingProduct.supplier_id,
+      status: req.body.status || existingProduct.status
     };
 
     const result = await Product.update(id, updatedProduct);
@@ -144,16 +222,141 @@ exports.updateProduct = async (req, res) => {
     res.json({
       id,
       message: 'Product updated successfully',
-      product: updatedProduct
+      product: { id, ...updatedProduct }
     });
   } catch (error) {
-    // Manejo específico de errores de duplicación
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ 
-        error: 'Duplicate entry',
-        field: error.message.includes('sku') ? 'SKU' : 'barcode'
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.updateProductStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+    
+    if (quantity === undefined || quantity === null) {
+      return res.status(400).json({ error: 'Quantity is required' });
+    }
+    
+    const qty = parseInt(quantity);
+    if (isNaN(qty) || qty < 0) {
+      return res.status(400).json({ 
+        error: 'Invalid quantity',
+        details: 'Quantity must be a valid integer >= 0'
       });
     }
+    
+    const result = await Product.updateStock(id, qty);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    
+    res.json({
+      id,
+      message: 'Product stock updated successfully',
+      quantity: qty
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.updateProductPrice = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { price } = req.body;
+    
+    if (price === undefined || price === null) {
+      return res.status(400).json({ error: 'Price is required' });
+    }
+    
+    const priceValue = parseFloat(price);
+    if (isNaN(priceValue) || priceValue < 0) {
+      return res.status(400).json({ 
+        error: 'Invalid price',
+        details: 'Price must be a valid number >= 0'
+      });
+    }
+    
+    const result = await Product.updatePrice(id, priceValue);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    
+    res.json({
+      id,
+      message: 'Product price updated successfully',
+      price: priceValue
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.updateProductCost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cost } = req.body;
+    
+    if (cost === undefined || cost === null) {
+      return res.status(400).json({ error: 'Cost is required' });
+    }
+    
+    const costValue = parseFloat(cost);
+    if (isNaN(costValue) || costValue < 0) {
+      return res.status(400).json({ 
+        error: 'Invalid cost',
+        details: 'Cost must be a valid number >= 0'
+      });
+    }
+    
+    const result = await Product.updateCost(id, costValue);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    
+    res.json({
+      id,
+      message: 'Product cost updated successfully',
+      cost: costValue
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.updateProductStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' });
+    }
+    
+    const validStatuses = ['active', 'inactive', 'deleted', 'out_of_stock'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        error: 'Invalid status',
+        details: `Valid statuses are: ${validStatuses.join(', ')}`
+      });
+    }
+    
+    const result = await Product.updateStatus(id, status);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    
+    res.json({
+      id,
+      message: 'Product status updated successfully',
+      status
+    });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
@@ -161,74 +364,49 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
+    const { permanent } = req.query;
     
-    // Verificar si el producto existe
     const product = await Product.getById(id);
+    
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // Verificar si hay stock antes de eliminar
-    if (product.stock > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete product with existing stock',
-        current_stock: product.stock
+    // Eliminar permanentemente si se especifica
+    if (permanent === 'true') {
+      const result = await Product.delete(id);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      res.json({
+        id,
+        message: 'Product deleted permanently'
+      });
+    } else {
+      // Soft delete por defecto
+      const result = await Product.softDelete(id);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      res.json({
+        id,
+        message: 'Product deactivated successfully (soft delete)',
+        note: 'Use ?permanent=true to delete permanently'
       });
     }
-
-    const result = await Product.delete(id);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    
-    res.status(204).send();
   } catch (error) {
-    // Manejar errores de clave foránea
-    if (error.code === 'ER_ROW_IS_REFERENCED_2') {
-      return res.status(409).json({ 
-        error: 'Cannot delete product referenced in sales or purchases'
-      });
-    }
     res.status(500).json({ error: error.message });
   }
 };
 
-exports.updateStock = async (req, res) => {
+exports.getProductStats = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { adjustment, reason } = req.body;
-    
-    if (typeof adjustment !== 'number') {
-      return res.status(400).json({ error: 'Invalid adjustment value' });
-    }
-    
-    const product = await Product.getById(id);
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    
-    const newStock = product.stock + adjustment;
-    if (newStock < 0) {
-      return res.status(400).json({ 
-        error: 'Insufficient stock for adjustment',
-        current_stock: product.stock,
-        attempted_adjustment: adjustment
-      });
-    }
-    
-    // Actualizar el stock
-    await db.query('UPDATE products SET stock = ? WHERE id = ?', [newStock, id]);
-    
-    // Aquí podrías registrar este movimiento en una tabla de historial de inventario
-    res.json({
-      id,
-      message: 'Stock updated successfully',
-      previous_stock: product.stock,
-      new_stock: newStock,
-      adjustment,
-      reason
-    });
+    const stats = await Product.getStats();
+    res.json(stats);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

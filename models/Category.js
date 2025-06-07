@@ -12,10 +12,10 @@ class Category {
   }
 
   static async create(category) {
-    const { id, name, description } = category;
+    const {name, description } = category;
     const [result] = await db.query(
-      'INSERT INTO categories (id, name, description) VALUES (?, ?, ?)',
-      [id, name, description]
+      'INSERT INTO categories ( name, description) VALUES ( ?, ?)',
+      [name, description]
     );
     return result;
   }

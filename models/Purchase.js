@@ -2,11 +2,11 @@ const db = require('../config/db');
 
 class Purchase {
   // Obtener todas las compras
-  static async getAll() {
+   static async getAll() {
     const query = `
       SELECT p.*, s.name as supplier_name 
       FROM purchases p 
-      LEFT JOIN suppliers s ON p.supplierId = s.id 
+      LEFT JOIN suppliers s ON p.supplier_id = s.id  
       ORDER BY p.date DESC
     `;
     const [rows] = await db.execute(query);
@@ -18,7 +18,7 @@ class Purchase {
     const query = `
       SELECT p.*, s.name as supplier_name 
       FROM purchases p 
-      LEFT JOIN suppliers s ON p.supplierId = s.id 
+      LEFT JOIN suppliers s ON p.supplier_id = s.id 
       WHERE p.id = ?
     `;
     const [rows] = await db.execute(query, [id]);
@@ -30,7 +30,7 @@ class Purchase {
     const query = `
       SELECT p.*, s.name as supplier_name 
       FROM purchases p 
-      LEFT JOIN suppliers s ON p.supplierId = s.id 
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
       WHERE p.supplierId = ? 
       ORDER BY p.date DESC
     `;
@@ -76,7 +76,7 @@ class Purchase {
   // Crear nueva compra
   static async create(purchaseData) {
     const query = `
-      INSERT INTO purchases (id, date, supplierId, total, status, created_at, updated_at)
+      INSERT INTO purchases (id, date, supplier_id, total, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, NOW(), NOW())
     `;
     const [result] = await db.execute(query, [
@@ -93,7 +93,7 @@ class Purchase {
   static async update(id, purchaseData) {
     const query = `
       UPDATE purchases 
-      SET date = ?, supplierId = ?, total = ?, status = ?, updated_at = NOW()
+      SET date = ?, supplier_id = ?, total = ?, status = ?, updated_at = NOW()
       WHERE id = ?
     `;
     const [result] = await db.execute(query, [

@@ -2,28 +2,26 @@ const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
 
-// Ruta para obtener todos los productos
+// Rutas para obtener productos
 router.get('/', productController.getAllProducts);
-
-// Ruta para buscar productos (debe ir antes de /:id para evitar conflictos)
 router.get('/search', productController.searchProducts);
-
-// Ruta para obtener productos por categoría
-router.get('/category/:categoryId', productController.getProductsByCategory);
-
-// Ruta para obtener un producto por ID
+router.get('/low-stock', productController.getLowStockProducts);
+router.get('/stats', productController.getProductStats);
+router.get('/category/:category_id', productController.getProductsByCategory);
+router.get('/supplier/:supplier_id', productController.getProductsBySupplier);
 router.get('/:id', productController.getProductById);
 
-// Ruta para crear un nuevo producto
+// Rutas para crear y modificar productos
 router.post('/', productController.createProduct);
-
-// Ruta para actualizar un producto
 router.put('/:id', productController.updateProduct);
 
-// Ruta para actualizar stock de un producto
-router.patch('/:id/stock', productController.updateStock);
+// Rutas para actualizaciones específicas
+router.patch('/:id/stock', productController.updateProductStock);
+router.patch('/:id/price', productController.updateProductPrice);
+router.patch('/:id/cost', productController.updateProductCost);
+router.patch('/:id/status', productController.updateProductStatus);
 
-// Ruta para eliminar un producto
+// Ruta para eliminar producto
 router.delete('/:id', productController.deleteProduct);
 
 module.exports = router;

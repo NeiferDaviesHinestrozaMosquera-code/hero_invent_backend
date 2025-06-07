@@ -7,9 +7,9 @@ class Supplier {
     const { name, contact, email, phone, address } = supplierData;
     
     const [result] = await db.execute(
-      `INSERT INTO suppliers (id, name, contact, email, phone, address) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, name, contact, email, phone, address]
+      `INSERT INTO suppliers ( name, contact, email, phone, address) 
+       VALUES ( ?, ?, ?, ?, ?)`,
+      [ name, contact, email, phone, address]
     );
     
     return this.findById(id);
