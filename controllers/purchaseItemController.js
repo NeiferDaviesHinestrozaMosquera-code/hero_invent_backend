@@ -268,3 +268,122 @@ exports.deletePurchaseItem = async (req, res) => {
     });
   }
 };
+
+// ✅ Función para obtener elementos de compra por ID de compra
+exports.getPurchaseItemsByPurchaseId = async (req, res) => {
+  try {
+    const { purchase_id } = req.params;
+    
+    // Validar que purchase_id sea un número válido
+    const parsedPurchaseId = parseInt(purchase_id);
+    if (isNaN(parsedPurchaseId)) {
+      return res.status(400).json({ 
+        error: 'Invalid purchase ID',
+        message: 'El ID de la compra debe ser un número válido'
+      });
+    }
+
+    // Verificar que la compra existe
+    const purchaseQuery = `SELECT id FROM purchases WHERE id = ?`;
+    const [purchaseRows] = await db.execute(purchaseQuery, [parsedPurchaseId]);
+    
+    if (purchaseRows.length === 0) {
+      return res.status(404).json({ 
+        error: 'Purchase not found',
+        message: `La compra con ID ${parsedPurchaseId} no existe`
+      });
+    }
+
+    // Obtener todos los elementos de la compra
+    const query = `
+      SELECT 
+        pi.id,
+        pi.purchase_id,
+        pi.product_id,
+        pi.quantity,
+        pi.cost,
+        pi.subtotal,
+        p.name AS product_name,
+        p.price AS product_price
+      FROM purchase_items pi
+      JOIN products p ON pi.product_id = p.id
+      WHERE pi.purchase_id = ?
+      ORDER BY pi.id ASC
+    `;
+    
+    const [items] = await db.execute(query, [parsedPurchaseId]);
+    
+    res.json({
+      purchase_id: parsedPurchaseId,
+      total_items: items.length,
+      items: items
+    });
+  } catch (error) {
+    console.error('Error getting purchase items by purchase ID:', error);
+    res.status(500).json({ 
+      error: error.message,
+      message: 'Error al obtener elementos de compra por ID de compra'
+    });
+  }
+};
+
+// ✅ Función para obtener elementos de compra por ID de producto
+exports.getPurchaseItemsByProduct = async (req, res) => {
+  try {
+    const { product_id } = req.params;
+    
+    // Validar que product_id sea un número válido
+    const parsedProductId = parseInt(product_id);
+    if (isNaN(parsedProductId)) {
+      return res.status(400).json({ 
+        error: 'Invalid product ID',
+        message: 'El ID del producto debe ser un número válido'
+      });
+    }
+
+    // Verificar que el producto existe
+    const productQuery = `SELECT id, name, price FROM products WHERE id = ?`;
+    const [productRows] = await db.execute(productQuery, [parsedProductId]);
+    
+    if (productRows.length === 0) {
+      return res.status(404).json({ 
+        error: 'Product not found',
+        message: `El producto con ID ${parsedProductId} no existe`
+      });
+    }
+
+    // Obtener todos los elementos de compra para este producto
+    const query = `
+      SELECT 
+        pi.id,
+        pi.purchase_id,
+        pi.product_id,
+        pi.quantity,
+        pi.cost,
+        pi.subtotal,
+        pur.date AS purchase_date,
+        pur.total_amount AS purchase_total,
+        s.name AS supplier_name
+      FROM purchase_items pi
+      JOIN purchases pur ON pi.purchase_id = pur.id
+      LEFT JOIN suppliers s ON pur.supplier_id = s.id
+      WHERE pi.product_id = ?
+      ORDER BY pur.date DESC, pi.id ASC
+    `;
+    
+    const [items] = await db.execute(query, [parsedProductId]);
+    
+    res.json({
+      product_id: parsedProductId,
+      product_name: productRows[0].name,
+      total_purchases: items.length,
+      items: items
+    });
+  } catch (error) {
+    console.error('Error getting purchase items by product ID:', error);
+    res.status(500).json({ 
+      error: error.message,
+      message: 'Error al obtener elementos de compra por ID de producto'
+    });
+  }
+};

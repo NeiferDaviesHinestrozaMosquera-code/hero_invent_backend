@@ -1,16 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const purchaseItemController = require('../controllers/purchaseItemController');
+const saleItemController = require('../controllers/saleItemController');
 
 // ✅ Rutas principales CRUD
-router.get('/', purchaseItemController.getAllPurchaseItems);
-router.get('/:id', purchaseItemController.getPurchaseItemById);
-router.post('/', purchaseItemController.createPurchaseItem);
-router.put('/:id', purchaseItemController.updatePurchaseItem);
-router.delete('/:id', purchaseItemController.deletePurchaseItem);
+router.get('/', saleItemController.getAllSaleItems);
+router.get('/:id', saleItemController.getSaleItemById);
+router.post('/', saleItemController.createSaleItem);
+router.put('/:id', saleItemController.updateSaleItem);
+router.delete('/:id', saleItemController.deleteSaleItem);
 
-// ✅ Rutas adicionales - AHORA CON FUNCIONES EXISTENTES
-router.get('/purchase/:purchase_id', purchaseItemController.getPurchaseItemsByPurchase);
-router.get('/product/:product_id', purchaseItemController.getPurchaseItemsByProduct);
+// ✅ Rutas adicionales para elementos de venta
+router.get('/sale/:sale_id', saleItemController.getSaleItemsBySaleId);
+router.get('/product/:product_id', saleItemController.getSaleItemsByProduct);
 
 module.exports = router;

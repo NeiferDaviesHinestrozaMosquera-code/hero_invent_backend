@@ -32,7 +32,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     const allowedOrigins = process.env.ALLOWED_ORIGINS 
       ? process.env.ALLOWED_ORIGINS.split(',')
-      : ['http://localhost:8000', 'http://127.0.0.1:3000'];
+      : ['http://localhost:8000', 'http://127.0.0.1:8000'];
     
     // Permitir requests sin origin (como mobile apps o Postman)
     if (!origin) return callback(null, true);
