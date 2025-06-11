@@ -169,7 +169,7 @@ app.use((error, req, res, next) => {
 });
 
 // Configurar puerto
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8000;
 
 // Función para iniciar el servidor
 async function startServer() {

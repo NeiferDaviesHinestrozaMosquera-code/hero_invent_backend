@@ -1,3 +1,4 @@
+const { p } = require('framer-motion/m');
 const db = require('../config/db');
 
 class Product {
@@ -95,8 +96,8 @@ class Product {
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN suppliers s ON p.supplier_id = s.id
-      WHERE p.quantity <= ?
-      ORDER BY p.quantity ASC, p.name ASC
+      WHERE p.stock <= ?
+      ORDER BY p.stock ASC, p.name ASC
     `;
     const [rows] = await db.execute(query, [threshold]);
     return rows;
@@ -106,24 +107,33 @@ class Product {
   static async create(productData) {
     const query = `
       INSERT INTO products (
-        name, sku, description, price, cost, quantity, 
-        category_id, supplier_id, status, created_at, updated_at
+        name, description, price, cost, stock, min_stock,
+        category_id, supplier_id, sku, barcode, status, image, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
-    
-    const [result] = await db.execute(query, [
+
+    const params = [
       productData.name,
-      productData.sku || null,
       productData.description || null,
       productData.price,
       productData.cost || null,
-      productData.quantity || 0,
+      productData.stock || 0,
+      productData.min_stock || 0,
       productData.category_id || null,
       productData.supplier_id || null,
-      productData.status || 'active'
-    ]);
-    
+      productData.sku || null,
+      productData.barcode || null,
+      productData.status === 'active' || productData.status === true ? 1 : 0,
+      productData.image || null
+    ];
+
+    console.log('SQL CREATE Query:', query);
+    console.log('SQL CREATE Parameters:', params);
+
+    const [result] = await db.execute(query, params);
+
+
     return result;
   }
 
@@ -131,58 +141,61 @@ class Product {
   static async update(id, productData) {
     const query = `
       UPDATE products 
-      SET name = ?, sku = ?, description = ?, price = ?, cost = ?, 
-          quantity = ?, category_id = ?, supplier_id = ?, status = ?, 
+      SET name = ?, description = ?, price = ?, cost = ?, stock = ?, min_stock = ?,
+          category_id = ?, supplier_id = ?, sku = ?, barcode = ?, status = ?, image = ?,  
           updated_at = NOW()
       WHERE id = ?
     `;
-    
+
     const [result] = await db.execute(query, [
       productData.name,
-      productData.sku,
       productData.description,
       productData.price,
       productData.cost,
-      productData.quantity,
+      productData.stock,
+      productData.min_stock,
       productData.category_id,
       productData.supplier_id,
-      productData.status,
+      productData.sku,
+      productData.barcode,
+      productData.status === 'active' || productData.status === true ? 1 : 0,
+      productData.image,
       id
     ]);
-    
+
     return result;
   }
 
   // Actualizar solo el stock
-  static async updateStock(id, quantity) {
+  static async updateStock(id, stock) {
     const query = `
       UPDATE products 
-      SET quantity = ?, updated_at = NOW()
+      SET stock = ?, updated_at = NOW()
       WHERE id = ?
     `;
-    const [result] = await db.execute(query, [quantity, id]);
+    const [result] = await db.execute(query, [stock, id]);
     return result;
   }
 
   // Incrementar stock (para compras)
-  static async incrementStock(id, quantity) {
+  static async incrementStock(id, stock) {
     const query = `
       UPDATE products 
-      SET quantity = quantity + ?, updated_at = NOW()
+      SET stock = stock + ?, updated_at = NOW()
       WHERE id = ?
     `;
-    const [result] = await db.execute(query, [quantity, id]);
+    const [result] = await db.execute(query, [stock, id]);
     return result;
   }
 
   // Decrementar stock (para ventas)
-  static async decrementStock(id, quantity) {
+  static async decrementStock(id, stock) {
     const query = `
       UPDATE products 
-      SET quantity = GREATEST(0, quantity - ?), updated_at = NOW()
+      SET stock = GREATEST(0, stock - ?), updated_at = NOW()
       WHERE id = ?
     `;
-    const [result] = await db.execute(query, [quantity, id]);
+    const [result] = await db.execute(query, [stock, id]);
     return result;
   }
 
@@ -210,12 +223,13 @@ class Product {
 
   // Cambiar estado del producto
   static async updateStatus(id, status) {
+    const statusValue = status === 'active' || status === true ? 1 : 0;
     const query = `
       UPDATE products 
       SET status = ?, updated_at = NOW()
       WHERE id = ?
     `;
-    const [result] = await db.execute(query, [status, id]);
+    const [result] = await db.execute(query, [statusValue, id]);
     return result;
   }
 
@@ -223,7 +237,7 @@ class Product {
   static async softDelete(id) {
     const query = `
       UPDATE products 
-      SET status = 'deleted', updated_at = NOW()
+      SET status = 0, updated_at = NOW()
       WHERE id = ?
     `;
     const [result] = await db.execute(query, [id]);
@@ -241,28 +255,27 @@ class Product {
   static async skuExists(sku, excludeId = null) {
     let query = `SELECT id FROM products WHERE sku = ?`;
     let params = [sku];
-    
+
     if (excludeId) {
       query += ` AND id != ?`;
       params.push(excludeId);
     }
-    
+
     const [rows] = await db.execute(query, params);
     return rows.length > 0;
   }
 
   // Obtener estadísticas de productos
   static async getStats() {
-    const query = `
-      SELECT 
+    const query =
+      `SELECT 
         COUNT(*) as total_products,
-        COUNT(CASE WHEN status = 'active' THEN 1 END) as active_products,
-        COUNT(CASE WHEN quantity <= 10 THEN 1 END) as low_stock_products,
+        COUNT(CASE WHEN status = 1 THEN 1 END) as active_products,
+        COUNT(CASE WHEN stock <= min_stock THEN 1 END) as low_stock_products,
         AVG(price) as average_price,
-        SUM(quantity * cost) as total_inventory_value
+        SUM(stock * cost) as total_inventory_value
       FROM products
-      WHERE status != 'deleted'
-    `;
+      WHERE status != 0`;
     const [rows] = await db.execute(query);
     return rows[0];
   }

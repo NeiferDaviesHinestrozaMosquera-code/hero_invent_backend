@@ -8,26 +8,55 @@ exports.getAllSales = async (req, res) => {
     const [sales] = await db.query(`
       SELECT sales.*, 
         customer.first_name, 
-        customer.last_name
+        customer.last_name,
+        customer.email,
+        customer.phone,
+        customer.address
       FROM sales
       LEFT JOIN customer ON sales.customer_id = customer.id
+      ORDER BY sales.created_at DESC
     `);
     
     // Obtener items para cada venta y formatear
     const formattedSales = await Promise.all(sales.map(async sale => {
       const items = await Sale.getItemsBySaleId(sale.id);
+      
+      // Calcular total si no está presente o es 0
+      let calculatedTotal = sale.total;
+      if (!calculatedTotal || calculatedTotal === 0) {
+        calculatedTotal = items.reduce((sum, item) => 
+          sum + (item.quantity * item.price), 0
+        );
+      }
+      
       return {
+        id: sale.id, // ✅ Incluir ID de la base de datos
         date: sale.date.toISOString().split('T')[0],
         customer_id: sale.customer_id,
-        payment: sale.payment,
-        status: sale.status,
-        customer_name: sale.first_name && sale.last_name 
+        customer: sale.first_name && sale.last_name 
           ? `${sale.first_name} ${sale.last_name}` 
           : 'Cliente no registrado',
+        total: parseFloat(calculatedTotal), // ✅ Total correcto
+        payment: sale.payment,
+        status: sale.status,
+        created_at: sale.created_at,
+        updated_at: sale.updated_at,
+        // Información adicional del cliente
+        customer_info: {
+          first_name: sale.first_name,
+          last_name: sale.last_name,
+          email: sale.email,
+          phone: sale.phone,
+          address: sale.address
+        },
         items: items.map(item => ({
+          id: item.id,
+          sale_id: sale.id,
           product_id: item.product_id,
+          product_name: item.product_name || 'Producto',
           quantity: item.quantity,
-          price: item.price
+          unit_price: item.price,
+          subtotal: item.quantity * item.price
         }))
       };
     }));
@@ -61,19 +90,43 @@ exports.getSaleById = async (req, res) => {
 
     const items = await Sale.getItemsBySaleId(id);
     
-    // Formatear respuesta al formato deseado
+    // Calcular total si no está presente o es 0
+    let calculatedTotal = sale.total;
+    if (!calculatedTotal || calculatedTotal === 0) {
+      calculatedTotal = items.reduce((sum, item) => 
+        sum + (item.quantity * item.price), 0
+      );
+    }
+    
+    // Formatear respuesta completa
     const response = {
-      date: sale.date.toISOString().split('T')[0], // Formato YYYY-MM-DD
+      id: sale.id, // ✅ Incluir ID
+      date: sale.date.toISOString().split('T')[0],
       customer_id: sale.customer_id,
-      payment: sale.payment,
-      status: sale.status,
-      customer_name: sale.first_name && sale.last_name 
+      customer: sale.first_name && sale.last_name 
         ? `${sale.first_name} ${sale.last_name}` 
         : 'Cliente no registrado',
+      total: parseFloat(calculatedTotal), // ✅ Total correcto
+      payment: sale.payment,
+      status: sale.status,
+      created_at: sale.created_at,
+      updated_at: sale.updated_at,
+      // Información completa del cliente
+      customer_info: {
+        first_name: sale.first_name,
+        last_name: sale.last_name,
+        email: sale.email,
+        phone: sale.phone,
+        address: sale.address
+      },
       items: items.map(item => ({
+        id: item.id,
+        sale_id: id,
         product_id: item.product_id,
+        product_name: item.product_name || 'Producto',
         quantity: item.quantity,
-        price: item.price
+        unit_price: item.price,
+        subtotal: item.quantity * item.price
       }))
     };
     
@@ -165,80 +218,49 @@ exports.getSalesByStatus = async (req, res) => {
 // Añadir esta función al controlador
 
 exports.createSale = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    await connection.beginTransaction();
+    const { customer, customer_id, total, status, payment, items } = req.body;
 
-    const { customer_id, customer, items, ...saleData } = req.body;
-    
-    // 1. Manejar cliente existente o nuevo
-    let customerId = customer_id;
-    if (!customer_id && customer) {
-      const [newCustomer] = await connection.query(
-        'INSERT INTO customer (first_name, last_name) VALUES (?, ?)',
-        [customer, '']
-      );
-      customerId = newCustomer.insertId;
+    // Validar que se proporcione customer o customer_id
+    if (!customer && !customer_id) {
+      return res.status(400).json({ error: 'Customer name or customer_id is required' });
     }
 
-    // 2. Crear la venta
-    const [saleResult] = await connection.query(
-      `INSERT INTO sales (date, customer_id, total, status, payment) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        new Date().toISOString().split('T')[0], // Fecha actual
-        customerId,
-        saleData.total,
-        'completed',
-        saleData.payment
-      ]
-    );
-    const saleId = saleResult.insertId;
+    // Crear la venta
+    const saleData = {
+      customer,
+      customer_id,
+      total,
+      status,
+      payment,
+      items // Incluir items en el cuerpo
+    };
 
-    // 3. Crear items y actualizar stock
-    for (const item of items) {
-      // Insertar item de venta
-      await connection.query(
-        `INSERT INTO sale_items (sale_id, product_id, quantity, price, subtotal)
-         VALUES (?, ?, ?, ?, ?)`,
-        [saleId, item.product_id, item.quantity, item.unit_price, item.subtotal]
-      );
-      
-      // Actualizar stock del producto
-      await connection.query(
-        `UPDATE products SET stock = stock - ? WHERE id = ?`,
-        [item.quantity, item.product_id]
-      );
+    const createdSale = await Sale.create(saleData);
+
+    // Actualizar el stock de los productos
+     if (items && Array.isArray(items)) {
+      for (const item of items) {
+        await Product.updateStock(item.product_id, item.quantity);
+      }
     }
-
-    await connection.commit();
     
-    // Obtener venta completa para respuesta
-    const [sale] = await connection.query(
-      `SELECT * FROM sales WHERE id = ?`,
-      [saleId]
-    );
-    
-    const [saleItems] = await connection.query(
-      `SELECT * FROM sale_items WHERE sale_id = ?`,
-      [saleId]
-    );
-    
-    res.status(201).json({
-      ...sale[0],
-      items: saleItems
+    // Devolver la venta creada con el ID
+    return res.status(201).json({
+      id: createdSale.insertId,
+      date: req.body.date || new Date().toISOString().split('T')[0],
+      customer,
+      customer_id,
+      total,
+      status,
+      payment,
+      items // Incluir items en la respuesta
     });
   } catch (error) {
-    await connection.rollback();
-    console.error('Error creando venta:', error);
-    res.status(500).json({ 
-      error: 'Error creating sale', 
-      details: error.message
-    });
-  } finally {
-    connection.release();
+    console.error('Error creating sale:', error);
+    return res.status(500).json({ error: 'Error creating sale', details: error.message });
   }
-  };
+};
 
 exports.updateSale = async (req, res) => {
   const connection = await db.getConnection();

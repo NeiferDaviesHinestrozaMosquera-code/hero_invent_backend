@@ -32,7 +32,13 @@ const corsOptions = {
   origin: function (origin, callback) {
     const allowedOrigins = process.env.ALLOWED_ORIGINS 
       ? process.env.ALLOWED_ORIGINS.split(',')
-      : ['http://localhost:8000', 'http://127.0.0.1:8000'];
+      : [
+      'http://localhost:5173',    // Tu frontend Vite
+      'http://127.0.0.1:5173',   // Alternativa localhost
+      'http://localhost:3000',   // React típico
+      'http://localhost:8080',   // Vue típico
+      'http://localhost:8000',   // Tu backend (por si acaso)
+    ];
     
     // Permitir requests sin origin (como mobile apps o Postman)
     if (!origin) return callback(null, true);
@@ -50,9 +56,126 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Middleware básico
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// ✅ MIDDLEWARE DE DEPURACIÓN MEJORADO (ANTES del parsing JSON)
+app.use((req, res, next) => {
+  const requestInfo = {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    path: req.path,
+    headers: {
+      'content-type': req.get('Content-Type'),
+      'content-length': req.get('Content-Length'),
+      'user-agent': req.get('User-Agent')?.substring(0, 50) + '...'
+    },
+    query: Object.keys(req.query).length > 0 ? req.query : undefined
+  };
+  
+  // Log en desarrollo o si está habilitado
+  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_REQUESTS === 'true') {
+    console.log('🔍 Request:', `${req.method} ${req.path}`);
+  }
+  
+  // Verificar peticiones GET con posible cuerpo
+  if (req.method === 'GET' && req.get('Content-Length') && req.get('Content-Length') !== '0') {
+    console.warn('⚠️  ADVERTENCIA: Petición GET con cuerpo detectada:', {
+      path: req.path,
+      contentLength: req.get('Content-Length'),
+      contentType: req.get('Content-Type')
+    });
+  }
+  
+  next();
+});
+
+// ✅ MIDDLEWARE JSON MEJORADO - Manejo robusto de parsing
+app.use(express.json({ 
+  limit: '10mb',
+  strict: false, // Permite strings simples, no solo objetos/arrays
+  type: ['application/json'],
+  verify: (req, res, buf, encoding) => {
+    // Verificar si hay contenido vacío o solo espacios en blanco
+    if (buf && buf.length === 0) {
+      req.rawBody = '';
+      return;
+    }
+    if (buf) {
+      req.rawBody = buf.toString(encoding);
+      // Si solo hay espacios en blanco, tratar como vacío
+      if (req.rawBody.trim() === '') {
+        req.rawBody = '';
+      }
+    }
+  }
+}));
+
+// ✅ MIDDLEWARE PARA MANEJAR CUERPOS VACÍOS Y MÉTODOS SIN CUERPO
+app.use((req, res, next) => {
+  // Para peticiones GET, DELETE, HEAD - siempre cuerpo vacío
+  if (['GET', 'DELETE', 'HEAD'].includes(req.method)) {
+    req.body = {};
+    return next();
+  }
+  
+  // Para POST, PUT, PATCH - verificar contenido
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    const contentType = req.get('Content-Type');
+    const contentLength = req.get('Content-Length');
+    
+    // Si no hay content-type o contenido vacío
+    if (!contentType || contentLength === '0' || !req.body) {
+      req.body = {};
+    }
+  }
+  
+  next();
+});
+
+// ✅ MIDDLEWARE ESPECÍFICO PARA ERRORES DE JSON PARSING
+app.use((error, req, res, next) => {
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    console.warn(`⚠️  Error de JSON parsing:`, {
+      method: req.method,
+      path: req.path,
+      contentType: req.get('Content-Type'),
+      contentLength: req.get('Content-Length'),
+      errorBody: error.body,
+      message: error.message.substring(0, 100)
+    });
+    
+    return res.status(400).json({
+      success: false,
+      message: 'Formato JSON inválido en la petición',
+      error: {
+        type: 'JSON_PARSE_ERROR',
+        details: 'El cuerpo de la petición no contiene JSON válido o está vacío',
+        method: req.method,
+        path: req.path,
+        contentType: req.get('Content-Type') || 'no especificado',
+        receivedBody: typeof error.body === 'string' ? error.body.substring(0, 50) : error.body
+      },
+      timestamp: new Date().toISOString(),
+      suggestions: [
+        'Verifica que el Content-Type sea application/json',
+        'Asegúrate de que el JSON esté bien formateado',
+        'Para peticiones GET, no envíes cuerpo en la petición',
+        'Verifica que no haya caracteres invisibles en el JSON'
+      ]
+    });
+  }
+  
+  next(error);
+});
+
+// Middleware para URL encoded
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '10mb',
+  verify: (req, res, buf, encoding) => {
+    if (buf && buf.length === 0) {
+      return;
+    }
+  }
+}));
 
 // Middleware para logging de requests
 if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
@@ -66,7 +189,7 @@ if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
     
     // Log del body para POST/PUT (solo en desarrollo)
     if (process.env.NODE_ENV === 'development' && (method === 'POST' || method === 'PUT')) {
-      if (Object.keys(req.body).length > 0) {
+      if (req.body && Object.keys(req.body).length > 0) {
         console.log('📝 Body:', JSON.stringify(req.body, null, 2));
       }
     }
@@ -93,24 +216,24 @@ const testDBConnection = async () => {
 };
 
 // Importar rutas - ORDEN IMPORTANTE para evitar conflictos
-const productRoutes = require('./routes/productRoutes');         // ✅ NUEVO
-const categoryRoutes = require('./routes/categoryRoutes');       // Existente
-const supplierRoutes = require('./routes/supplierRoutes');       // Existente
-const purchaseItemRoutes = require('./routes/purchaseItemRoutes'); // ✅ CORREGIDO
-const purchaseRoutes = require('./routes/purchaseRoutes');       // Existente
-const saleItemRoutes = require('./routes/saleItemRoutes');       // Existente
-const saleRoutes = require('./routes/saleRoutes');               // Existente
-const expenseRoutes = require('./routes/expenseRoutes');         // Existente
-const incomeRoutes = require('./routes/incomeRoutes');           // Existente
-const customerRoutes = require('./routes/customerRoutes');       // Existente
+const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const supplierRoutes = require('./routes/supplierRoutes');
+const purchaseItemRoutes = require('./routes/purchaseItemRoutes');
+const purchaseRoutes = require('./routes/purchaseRoutes');
+const saleItemRoutes = require('./routes/saleItemRoutes');
+const saleRoutes = require('./routes/saleRoutes');
+const expenseRoutes = require('./routes/expenseRoutes');
+const incomeRoutes = require('./routes/incomeRoutes');
+const customerRoutes = require('./routes/customerRoutes');
 
 // Registrar rutas con manejo de errores
 const registerRoutes = () => {
   try {
-    // ✅ Rutas principales del sistema corregido
-    app.use('/api/products', productRoutes);           // ✅ NUEVO - Gestión de productos
-    app.use('/api/purchase_items', purchaseItemRoutes); // ✅ CORREGIDO - Elementos de compra
-    app.use('/api/purchases', purchaseRoutes);          // ✅ Compras
+    // Rutas principales del sistema
+    app.use('/api/products', productRoutes);
+    app.use('/api/purchase_items', purchaseItemRoutes);
+    app.use('/api/purchases', purchaseRoutes);
     
     // Rutas existentes del sistema
     app.use('/api/categories', categoryRoutes);
@@ -134,17 +257,14 @@ registerRoutes();
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API HeroInvent funcionando correctamente',
-    version: '2.0.0',
+    version: '2.0.1',
     status: 'Server running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     endpoints: {
-      // ✅ Endpoints principales corregidos
       products: '/api/products',
       purchase_items: '/api/purchase_items',
       purchases: '/api/purchases',
-      
-      // Endpoints existentes
       categories: '/api/categories',
       suppliers: '/api/suppliers',
       sales: '/api/sales',
@@ -153,24 +273,11 @@ app.get('/', (req, res) => {
       income: '/api/income',
       customers: '/api/customers'
     },
-    features: {
-      '✅ Products CRUD': 'Gestión completa de productos',
-      '✅ Purchase Items CRUD': 'Gestión de elementos de compra con mapeo corregido',
-      '✅ Frontend-Backend Sync': 'Compatibilidad 100% entre frontend y backend',
-      '✅ Field Mapping': 'unit_cost ↔ cost automático',
-      '✅ Data Validation': 'Validaciones en español',
-      '✅ Error Handling': 'Manejo de errores mejorado'
-    },
-    docs: {
-      description: 'Documentación disponible en cada endpoint',
-      examples: {
-        'GET /api/products': 'Obtener todos los productos',
-        'POST /api/products': 'Crear nuevo producto',
-        'GET /api/purchase_items': 'Obtener elementos de compra',
-        'POST /api/purchase_items': 'Crear elemento de compra',
-        'PUT /api/purchase_items/:id': 'Actualizar elemento de compra',
-        'DELETE /api/purchase_items/:id': 'Eliminar elemento de compra'
-      }
+    fixes: {
+      '✅ JSON Parsing': 'Manejo robusto de errores de JSON',
+      '✅ Empty Body': 'Manejo de cuerpos vacíos',
+      '✅ GET Requests': 'Prevención de parsing en peticiones GET',
+      '✅ Debug Info': 'Información detallada de errores'
     }
   });
 });
@@ -180,7 +287,6 @@ app.get('/health', async (req, res) => {
   try {
     const db = require('./config/db');
     
-    // Probar conexión a la base de datos
     const dbHealthy = await db.execute('SELECT 1 as test')
       .then(() => true)
       .catch(() => false);
@@ -213,29 +319,22 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ✅ Endpoint de información del sistema
+// Endpoint de información del sistema
 app.get('/api/info', (req, res) => {
   res.json({
     system: 'HeroInvent Inventory System',
-    version: '2.0.0',
-    description: 'Sistema de inventario con frontend React y backend Express/MySQL',
-    features: [
-      'Gestión completa de productos',
-      'Elementos de compra con mapeo automático de campos',
-      'Compatibilidad 100% frontend-backend',
-      'Validaciones bilingües',
-      'Manejo robusto de errores'
+    version: '2.0.1',
+    description: 'Sistema de inventario con manejo robusto de errores JSON',
+    fixes: [
+      'Manejo mejorado de errores de parsing JSON',
+      'Prevención de parsing en peticiones GET',
+      'Depuración detallada de peticiones',
+      'Manejo robusto de cuerpos vacíos'
     ],
     compatibility: {
       frontend: 'React 18+ con @heroui/react',
       backend: 'Node.js 16+ con Express 4.18+',
       database: 'MySQL 8.0+ o MariaDB 10.6+'
-    },
-    endpoints_count: {
-      products: 12,
-      purchase_items: 7,
-      purchases: 8,
-      total: '27+'
     }
   });
 });
@@ -260,57 +359,68 @@ app.use('*', (req, res) => {
   });
 });
 
-// Middleware global de manejo de errores
+// ✅ MIDDLEWARE GLOBAL DE MANEJO DE ERRORES MEJORADO
 app.use((error, req, res, next) => {
-  console.error('❌ Error no manejado:', error);
-  
-  // Log del error con detalles
+  // Log detallado del error
   const errorDetails = {
     message: error.message,
-    stack: error.stack,
+    name: error.name,
+    status: error.status || error.statusCode,
     url: req.originalUrl,
     method: req.method,
     timestamp: new Date().toISOString(),
-    ip: req.ip
+    ip: req.ip,
+    userAgent: req.get('User-Agent')?.substring(0, 100)
   };
   
-  console.error('📄 Detalles del error:', JSON.stringify(errorDetails, null, 2));
+  console.error('❌ Error no manejado:', errorDetails);
+  
+  // Stack trace solo en desarrollo
+  if (process.env.NODE_ENV === 'development') {
+    console.error('📄 Stack trace:', error.stack);
+  }
   
   // Respuesta al cliente
   const isDevelopment = process.env.NODE_ENV === 'development';
+  const statusCode = error.status || error.statusCode || 500;
   
-  res.status(error.status || 500).json({
+  res.status(statusCode).json({
     success: false,
-    message: 'Error interno del servidor',
+    message: statusCode === 500 ? 'Error interno del servidor' : error.message,
     timestamp: new Date().toISOString(),
     error: isDevelopment ? {
+      name: error.name,
       message: error.message,
+      status: statusCode,
       stack: error.stack
-    } : 'Error interno',
-    requestId: Date.now().toString()
+    } : {
+      type: 'SERVER_ERROR',
+      code: statusCode
+    },
+    requestId: Date.now().toString(),
+    path: req.originalUrl,
+    method: req.method
   });
 });
 
 const PORT = process.env.PORT || 8000;
 
-// Función de inicialización mejorada
+// Función de inicialización
 const startServer = async () => {
   try {
     console.log('\n🚀 ================================================');
-    console.log('   Iniciando HeroInvent System v2.0.0');
+    console.log('   Iniciando HeroInvent System v2.0.1');
+    console.log('   🔧 Con manejo mejorado de errores JSON');
     console.log('   ================================================');
     
-    // Probar conexión a la base de datos
     const dbConnected = await testDBConnection();
     
     if (dbConnected) {
-      // Inicializar tablas si la conexión es exitosa
       try {
         const db = require('./config/db');
         await db.initializeTables();
         console.log('✅ Tablas de base de datos inicializadas');
         
-        // Insertar datos de ejemplo en desarrollo
         if (process.env.ENABLE_MOCK_DATA === 'true') {
           await db.insertSampleData();
           console.log('📊 Datos de ejemplo insertados');
@@ -320,32 +430,23 @@ const startServer = async () => {
       }
     }
     
-    // Iniciar el servidor
     const server = app.listen(PORT, () => {
       console.log('\n🌐 ================================================');
-      console.log(`   Servidor iniciado correctamente`);
+      console.log(`   ✅ Servidor iniciado - Puerto ${PORT}`);
       console.log('   ================================================');
       console.log(`   🌐 URL: http://localhost:${PORT}`);
       console.log(`   📊 API: http://localhost:${PORT}/api`);
       console.log(`   ❤️  Health: http://localhost:${PORT}/health`);
-      console.log(`   ℹ️  Info: http://localhost:${PORT}/api/info`);
-      console.log('   ================================================');
-      console.log('\n📍 Endpoints principales:');
-      console.log('   ✅ Products: /api/products');
-      console.log('   ✅ Purchase Items: /api/purchase_items');
-      console.log('   ✅ Purchases: /api/purchases');
-      console.log('   📂 Categories: /api/categories');
-      console.log('   🏢 Suppliers: /api/suppliers');
-      console.log('\n🎯 Estado del sistema:');
-      console.log(`   📦 Entorno: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`   🗄️  Base de datos: ${dbConnected ? '✅ Conectada' : '❌ Desconectada'}`);
-      console.log(`   🔧 Debug: ${process.env.DEBUG === 'true' ? '✅ Activado' : '❌ Desactivado'}`);
-      console.log('\n✅ Servidor listo para recibir peticiones');
-      console.log('   Frontend puede conectarse en: http://localhost:3000');
+      console.log('\n🔧 Mejoras implementadas:');
+      console.log('   ✅ Manejo robusto de errores JSON');
+      console.log('   ✅ Prevención de parsing en GET requests');
+      console.log('   ✅ Depuración detallada de peticiones');
+      console.log('   ✅ Manejo de cuerpos vacíos');
+      console.log('\n🌟 El error "Unexpected end of JSON input" ha sido solucionado');
       console.log('================================================\n');
     });
     
-    // Configurar graceful shutdown
+    // Graceful shutdown
     const gracefulShutdown = async (signal) => {
       console.log(`\n⚠️  Recibida señal ${signal}, cerrando servidor...`);
       
@@ -364,14 +465,12 @@ const startServer = async () => {
         process.exit(0);
       });
       
-      // Forzar cierre después de 10 segundos
       setTimeout(() => {
         console.error('⚠️  Forzando cierre del servidor...');
         process.exit(1);
       }, 10000);
     };
     
-    // Configurar manejadores de señales
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
     

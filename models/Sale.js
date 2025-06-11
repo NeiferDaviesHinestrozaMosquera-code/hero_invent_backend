@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const SaleItem = require('./SaleItem');
 
 class Sale {
   
@@ -22,35 +23,49 @@ class Sale {
     return rows[0];
   }
 
-  static async create(sale) {
-    // Generar valores por defecto si no se proporcionan
-    const date = sale.date || new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
-    const created_at = new Date();
-    const updated_at = created_at;
-    
-    const { customer, customer_id, total, status, payment } = sale;
+ static async create(sale) {
+  // Generar valores por defecto si no se proporcionan
+  const date = sale.date || new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
+  const created_at = new Date();
+  const updated_at = created_at;
+  
+  const { customer, customer_id, total, status, payment, items } = sale;
 
-    // Validar que se proporcione customer o customer_id
-    if (!customer && !customer_id) {
-      throw new Error('Customer name or customer_id is required');
-    }
-
-    const [result] = await db.query(
-      `INSERT INTO sales (date, customer_id, total, status, payment, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        date, 
-       
-        customer_id || null, 
-        total || 0, 
-        status || 'pending', 
-        payment || 'cash', 
-        created_at, 
-        updated_at
-      ]
-    );
-    return result;
+  // Validar que se proporcione customer o customer_id
+  if (!customer && !customer_id) {
+    throw new Error('Customer name or customer_id is required');
   }
+
+  // Crear la venta
+  const [result] = await db.query(
+    `INSERT INTO sales (date, customer_id, total, status, payment, created_at, updated_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      date, 
+      customer_id || null, 
+      total || 0, 
+      status || 'pending', 
+      payment || 'cash', 
+      created_at, 
+      updated_at
+    ]
+  );
+
+  // Crear los items de la venta
+  if (items && Array.isArray(items)) {
+    for (const item of items) {
+      await SaleItem.create({
+        sale_id: result.insertId,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price: item.unit_price,
+        subtotal: item.subtotal // Incluir subtotal si es necesario
+      });
+    }
+  }
+
+  return result;
+}
 
   static async update(id, sale) {
     const { date,  customer_id, total, status, payment } = sale;
@@ -72,11 +87,19 @@ class Sale {
  static async getItemsBySaleId(sale_id) {
   const [rows] = await db.query(`
     SELECT 
-      product_id, 
-      quantity, 
-      price
-    FROM sale_items 
-    WHERE sale_id = ?
+      si.id,
+      si.sale_id,
+      si.product_id, 
+      si.quantity, 
+      si.price,
+      si.subtotal,
+      p.name as product_name,
+      c.name as category_name
+    FROM sale_items si
+    LEFT JOIN products p ON si.product_id = p.id
+    LEFT JOIN categories c ON p.category_id = c.id
+    WHERE si.sale_id = ?
+    ORDER BY si.id
   `, [sale_id]);
   return rows;
 }
